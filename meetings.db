@@ -1,0 +1,14 @@
+CREATE TABLE meetings (
+    id TEXT PRIMARY KEY,
+    host_name TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE participants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id TEXT,
+    name TEXT,
+    is_host BOOLEAN,
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (meeting_id) REFERENCES meetings(id)
+);
