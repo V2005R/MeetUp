@@ -3,130 +3,13 @@ import random
 import string
 import time
 from datetime import datetime
-import sqlite3
-import os
-import atexit
 
-# Database setup with robust error handling
-def init_db():
-    try:
-        conn = sqlite3.connect('file:meetings.db?mode=memory&cache=shared', uri=True)
-        c = conn.cursor()
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS meetings (
-                id TEXT PRIMARY KEY,
-                host_name TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS participants (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                meeting_id TEXT,
-                name TEXT,
-                is_host BOOLEAN,
-                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (meeting_id) REFERENCES meetings(id)
-            )
-        ''')
-        conn.commit()
-        return conn
-    except sqlite3.Error as e:
-        st.error(f"Database error: {e}")
-        return None
-
-# Get a database connection
-def get_db():
-    try:
-        return sqlite3.connect('file:meetings.db?mode=memory&cache=shared', uri=True)
-    except sqlite3.Error as e:
-        st.error(f"Connection error: {e}")
-        return None
-
-# Database functions
-def create_meeting(meeting_id, host_name):
-    conn = get_db()
-    if conn:
-        try:
-            c = conn.cursor()
-            c.execute("INSERT INTO meetings (id, host_name) VALUES (?, ?)", 
-                      (meeting_id, host_name))
-            c.execute("INSERT INTO participants (meeting_id, name, is_host) VALUES (?, ?, ?)",
-                      (meeting_id, host_name, 1))
-            conn.commit()
-        except sqlite3.Error as e:
-            st.error(f"Create meeting error: {e}")
-        finally:
-            conn.close()
-
-def join_meeting(meeting_id, name):
-    conn = get_db()
-    if conn:
-        try:
-            c = conn.cursor()
-            c.execute("SELECT id FROM meetings WHERE id = ?", (meeting_id,))
-            if not c.fetchone():
-                st.error("Meeting ID does not exist!")
-                return False
-            
-            c.execute("INSERT INTO participants (meeting_id, name, is_host) VALUES (?, ?, ?)",
-                      (meeting_id, name, 0))
-            conn.commit()
-            return True
-        except sqlite3.Error as e:
-            st.error(f"Join meeting error: {e}")
-            return False
-        finally:
-            conn.close()
-    return False
-
-def get_participants(meeting_id):
-    conn = get_db()
-    if conn:
-        try:
-            c = conn.cursor()
-            c.execute("SELECT name, is_host FROM participants WHERE meeting_id = ?", (meeting_id,))
-            participants = []
-            for row in c.fetchall():
-                participants.append({
-                    "name": row[0],
-                    "is_host": bool(row[1]),
-                    "mic_on": True,
-                    "camera_on": True
-                })
-            return participants
-        except sqlite3.Error as e:
-            st.error(f"Get participants error: {e}")
-            return []
-        finally:
-            conn.close()
-    return []
-
-def remove_participant(meeting_id, name):
-    conn = get_db()
-    if conn:
-        try:
-            c = conn.cursor()
-            c.execute("DELETE FROM participants WHERE meeting_id = ? AND name = ?", 
-                      (meeting_id, name))
-            conn.commit()
-        except sqlite3.Error as e:
-            st.error(f"Remove participant error: {e}")
-        finally:
-            conn.close()
-
-def end_meeting(meeting_id):
-    conn = get_db()
-    if conn:
-        try:
-            c = conn.cursor()
-            c.execute("DELETE FROM participants WHERE meeting_id = ?", (meeting_id,))
-            c.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
-            conn.commit()
-        except sqlite3.Error as e:
-            st.error(f"End meeting error: {e}")
-        finally:
-            conn.close()
+# Global meeting storage using Streamlit's session state
+def init_global_state():
+    if 'all_meetings' not in st.session_state:
+        st.session_state.all_meetings = {}
+    if 'all_participants' not in st.session_state:
+        st.session_state.all_participants = {}
 
 # Generate a random meeting ID
 def generate_meeting_id():
@@ -231,16 +114,26 @@ def host_meeting():
         
         if st.form_submit_button("Create Meeting", type="primary"):
             if st.session_state.host_name.strip():
-                st.session_state.meeting_id = generate_meeting_id()
+                meeting_id = generate_meeting_id()
+                st.session_state.meeting_id = meeting_id
                 st.session_state.user_name = st.session_state.host_name
                 st.session_state.is_host = True
                 
-                # Create meeting in database
-                create_meeting(st.session_state.meeting_id, st.session_state.host_name)
+                # Create meeting in global state
+                st.session_state.all_meetings[meeting_id] = {
+                    "host": st.session_state.host_name,
+                    "created_at": datetime.now()
+                }
                 
                 # Add host as first participant
-                st.session_state.participants = get_participants(st.session_state.meeting_id)
+                st.session_state.all_participants[meeting_id] = [{
+                    "name": st.session_state.host_name,
+                    "is_host": True,
+                    "mic_on": True,
+                    "camera_on": True
+                }]
                 
+                st.session_state.participants = st.session_state.all_participants[meeting_id]
                 st.session_state.meeting_state = "meeting"
                 st.experimental_rerun()
             else:
@@ -260,12 +153,26 @@ def join_meeting():
         
         if st.form_submit_button("Join Meeting", type="primary"):
             if st.session_state.user_name.strip() and meeting_id.strip():
-                if join_meeting(meeting_id, st.session_state.user_name):
+                # Check if meeting exists
+                if meeting_id in st.session_state.all_meetings:
+                    # Add participant to meeting
+                    if meeting_id not in st.session_state.all_participants:
+                        st.session_state.all_participants[meeting_id] = []
+                    
+                    st.session_state.all_participants[meeting_id].append({
+                        "name": st.session_state.user_name,
+                        "is_host": False,
+                        "mic_on": True,
+                        "camera_on": True
+                    })
+                    
                     st.session_state.meeting_id = meeting_id
                     st.session_state.is_host = False
-                    st.session_state.participants = get_participants(meeting_id)
+                    st.session_state.participants = st.session_state.all_participants[meeting_id]
                     st.session_state.meeting_state = "meeting"
                     st.experimental_rerun()
+                else:
+                    st.error("Invalid meeting ID")
             else:
                 st.warning("Please enter both your name and meeting ID")
     
@@ -275,12 +182,10 @@ def join_meeting():
 
 # Meeting room
 def meeting_room():
-    # Check for new participants every 3 seconds
-    current_time = time.time()
-    if current_time - st.session_state.last_participant_check > 3:
-        st.session_state.participants = get_participants(st.session_state.meeting_id)
-        st.session_state.last_participant_check = current_time
-        st.experimental_rerun()
+    # Get participants for current meeting
+    meeting_id = st.session_state.meeting_id
+    if meeting_id in st.session_state.all_participants:
+        st.session_state.participants = st.session_state.all_participants[meeting_id]
     
     # Header
     st.title(f"Meeting: {st.session_state.meeting_id}")
@@ -344,6 +249,7 @@ def meeting_room():
                     st.write(item['text'])
             
             # Generate simulated subtitles
+            current_time = time.time()
             if current_time - st.session_state.last_subtitle_time > 8 and st.session_state.subtitle_history:
                 st.session_state.last_subtitle_time = current_time
                 last_speaker = st.session_state.subtitle_history[-1]["speaker"]
@@ -381,14 +287,26 @@ def meeting_room():
     with control_cols[2]:
         if st.session_state.is_host:
             if st.button("⛔ End Meeting", type="primary"):
-                end_meeting(st.session_state.meeting_id)
+                # Remove meeting from global state
+                if st.session_state.meeting_id in st.session_state.all_meetings:
+                    del st.session_state.all_meetings[st.session_state.meeting_id]
+                if st.session_state.meeting_id in st.session_state.all_participants:
+                    del st.session_state.all_participants[st.session_state.meeting_id]
+                
                 st.success("Meeting ended successfully!")
                 time.sleep(1)
                 st.session_state.meeting_state = "home"
                 st.experimental_rerun()
         else:
             if st.button("🚪 Leave Meeting", type="primary"):
-                remove_participant(st.session_state.meeting_id, st.session_state.user_name)
+                # Remove participant from meeting
+                meeting_id = st.session_state.meeting_id
+                if meeting_id in st.session_state.all_participants:
+                    participants = st.session_state.all_participants[meeting_id]
+                    st.session_state.all_participants[meeting_id] = [
+                        p for p in participants if p['name'] != st.session_state.user_name
+                    ]
+                
                 st.success("You left the meeting")
                 time.sleep(1)
                 st.session_state.meeting_state = "home"
@@ -412,8 +330,12 @@ def meeting_room():
     
     with control_cols[4]:
         if st.button("↩️ Home"):
-            if not st.session_state.is_host:
-                remove_participant(st.session_state.meeting_id, st.session_state.user_name)
+            if not st.session_state.is_host and st.session_state.meeting_id in st.session_state.all_participants:
+                # Remove participant if not host
+                participants = st.session_state.all_participants[st.session_state.meeting_id]
+                st.session_state.all_participants[st.session_state.meeting_id] = [
+                    p for p in participants if p['name'] != st.session_state.user_name
+                ]
             st.session_state.meeting_state = "home"
             st.experimental_rerun()
 
@@ -427,12 +349,8 @@ def main():
         initial_sidebar_state="collapsed"
     )
     
-    # Initialize database
-    db_conn = init_db()
-    if db_conn:
-        db_conn.close()
-    
-    # Initialize session state
+    # Initialize global state
+    init_global_state()
     init_session_state()
     
     # Hide Streamlit header/footer
