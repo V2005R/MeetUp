@@ -1,7 +1,2 @@
 streamlit
-streamlit-webrtc
-opencv-python
-av
-pynput
-pygame
-SpeechRecognition
+sqlite3
