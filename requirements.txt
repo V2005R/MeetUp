@@ -4,3 +4,4 @@ opencv-python
 av
 pynput
 pygame
+SpeechRecognition
