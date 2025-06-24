@@ -1,3 +1,15 @@
+import os
+import sqlite3
+
+# Ensure database permissions
+try:
+    os.system("touch meetings.db")
+    os.system("chmod 777 meetings.db")
+except:
+    pass
+
+# Rest of your code...
+
 import streamlit as st
 import random
 import string
